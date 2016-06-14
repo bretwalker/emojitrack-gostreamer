@@ -57,11 +57,14 @@ func initRedisPool() {
 	redisPool = newPool(host, pass)
 }
 
-func myRedisSubscriptions() (<-chan RedisMsg, <-chan RedisMsg) {
+func myRedisSubscriptions() (<-chan RedisMsg, <-chan RedisMsg, <-chan RedisMsg, <-chan RedisMsg, <-chan RedisMsg) {
 
 	// set up structures and channels to stream events out on
-	scoreUpdates := make(chan RedisMsg)
-	detailUpdates := make(chan RedisMsg)
+	prolificUpdates := make(chan RedisMsg)
+	mentionedUpdates := make(chan RedisMsg)
+	hashtagUpdates := make(chan RedisMsg)
+	recentTweetsUpdates := make(chan RedisMsg)
+	tweetCountUpdates := make(chan RedisMsg)
 
 	// get a new redis connection from pool.
 	// since this is the first time the app tries to do something with redis,
@@ -75,19 +78,26 @@ func myRedisSubscriptions() (<-chan RedisMsg, <-chan RedisMsg) {
 
 	// subscribe to and handle streams
 	psc := redis.PubSubConn{conn}
-	psc.Subscribe("stream.score_updates")
-	psc.PSubscribe("stream.tweet_updates.*")
+	psc.Subscribe("stream.prolific_updates")
+	conn2 := redisPool.Get()
+	psc2 := redis.PubSubConn{conn2}
+	psc2.Subscribe("stream.mentioned_updates")
+	conn3 := redisPool.Get()
+	psc3 := redis.PubSubConn{conn3}
+	psc3.Subscribe("stream.hashtag_updates")
+	conn4 := redisPool.Get()
+	psc4 := redis.PubSubConn{conn4}
+	psc4.Subscribe("stream.recent_tweets_updates")
+	conn5 := redisPool.Get()
+	psc5 := redis.PubSubConn{conn5}
+	psc5.Subscribe("stream.tweet_count_updates")
 
 	go func() {
 		for {
 			switch v := psc.Receive().(type) {
 			case redis.Message:
 				//fmt.Printf("%s: message: %s\n", v.Channel, v.Data)
-				scoreUpdates <- RedisMsg{v.Channel, v.Data} //string(v.Data)
-			case redis.PMessage:
-				//fmt.Printf("pattern: %s, channel: %s, data: %s\n", v.Pattern, v.Channel, v.Data)
-				//TODO: at some point we might need to also match the pattern here for kiosk mode
-				detailUpdates <- RedisMsg{v.Channel, v.Data}
+				prolificUpdates <- RedisMsg{v.Channel, v.Data}
 			case error:
 				log.Println("redis subscribe connection errored?@&*(#)akjd")
 				// probable cause is connection was closed, but force close just in case
@@ -99,6 +109,78 @@ func myRedisSubscriptions() (<-chan RedisMsg, <-chan RedisMsg) {
 			}
 		}
 	}()
+	
+	go func() {
+		for {
+			switch v := psc2.Receive().(type) {
+			case redis.Message:
+				//fmt.Printf("%s: message: %s\n", v.Channel, v.Data)
+				mentionedUpdates <- RedisMsg{v.Channel, v.Data}
+			case error:
+				log.Println("redis subscribe connection errored?@&*(#)akjd")
+				// probable cause is connection was closed, but force close just in case
+				conn2.Close()
 
-	return scoreUpdates, detailUpdates
+				log.Println("attempting to get a new one in 5 seconds...")
+				time.Sleep(5 * time.Second)
+				conn2 = redisPool.Get()
+			}
+		}
+	}()
+	
+	go func() {
+		for {
+			switch v := psc3.Receive().(type) {
+			case redis.Message:
+				//fmt.Printf("%s: message: %s\n", v.Channel, v.Data)
+				hashtagUpdates <- RedisMsg{v.Channel, v.Data}
+			case error:
+				log.Println("redis subscribe connection errored?@&*(#)akjd")
+				// probable cause is connection was closed, but force close just in case
+				conn3.Close()
+
+				log.Println("attempting to get a new one in 5 seconds...")
+				time.Sleep(5 * time.Second)
+				conn3 = redisPool.Get()
+			}
+		}
+	}()
+	
+	go func() {
+		for {
+			switch v := psc4.Receive().(type) {
+			case redis.Message:
+				//fmt.Printf("%s: message: %s\n", v.Channel, v.Data)
+				recentTweetsUpdates <- RedisMsg{v.Channel, v.Data}
+			case error:
+				log.Println("redis subscribe connection errored?@&*(#)akjd")
+				// probable cause is connection was closed, but force close just in case
+				conn4.Close()
+
+				log.Println("attempting to get a new one in 5 seconds...")
+				time.Sleep(5 * time.Second)
+				conn4 = redisPool.Get()
+			}
+		}
+	}()
+	
+	go func() {
+		for {
+			switch v := psc5.Receive().(type) {
+			case redis.Message:
+				//fmt.Printf("%s: message: %s\n", v.Channel, v.Data)
+				tweetCountUpdates <- RedisMsg{v.Channel, v.Data}
+			case error:
+				log.Println("redis subscribe connection errored?@&*(#)akjd")
+				// probable cause is connection was closed, but force close just in case
+				conn5.Close()
+
+				log.Println("attempting to get a new one in 5 seconds...")
+				time.Sleep(5 * time.Second)
+				conn5 = redisPool.Get()
+			}
+		}
+	}()
+
+	return prolificUpdates, mentionedUpdates, hashtagUpdates, recentTweetsUpdates, tweetCountUpdates
 }

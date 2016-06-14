@@ -2,13 +2,15 @@ package main
 
 import (
 	"log"
-	"strings"
 	"time"
-
 	"github.com/mroth/sseserver"
 )
 
 func main() {
+    go func() {
+        static_server()
+    }()
+
 	// set up SSE server interface
 	s := sseserver.NewServer()
 	clients := s.Broadcast
@@ -16,16 +18,35 @@ func main() {
 	// get us some data from redis
 	log.Println("Connecting to Redis...")
 	initRedisPool()
-	scoreUpdates, detailUpdates := myRedisSubscriptions()
+	prolificUpdates, mentionedUpdates, hashtagUpdates, recentTweetsUpdates, tweetCountUpdates := myRedisSubscriptions()
 
-	// fanout the scoreUpdates to two destinations
-	rawScoreUpdates := make(chan RedisMsg)
-	epsfeeder := make(chan RedisMsg)
+	prolificEpsFeeder := make(chan RedisMsg)
+	mentionedEpsFeeder := make(chan RedisMsg)
+	hashtagEpsFeeder := make(chan RedisMsg)
+	tweetCountEpsFeeder := make(chan RedisMsg)
+
 	go func() {
-		for scoreUpdate := range scoreUpdates {
-			rawScoreUpdates <- scoreUpdate
-			epsfeeder <- scoreUpdate
+		for scoreUpdate := range prolificUpdates {
+			prolificEpsFeeder <- scoreUpdate
 		}
+	}()
+
+	go func() {
+    	for scoreUpdate := range mentionedUpdates {
+    		mentionedEpsFeeder <- scoreUpdate
+    	}
+	}()
+	
+	go func() {
+    	for scoreUpdate := range hashtagUpdates {
+    		hashtagEpsFeeder <- scoreUpdate
+    	}
+	}()
+	
+	go func() {
+    	for scoreUpdate := range tweetCountUpdates {
+    		tweetCountEpsFeeder <- scoreUpdate
+    	}
 	}()
 
 	// Handle packing scores for eps namespace.
@@ -35,14 +56,38 @@ func main() {
 	// function expects to receive.
 	//
 	// Then, we just pipe that chan into a ScorePacker.
-	scoreVals := make(chan string)
-	epsScoreUpdates := ScorePacker(scoreVals, time.Duration(17*time.Millisecond))
+	prolificScoreVals := make(chan string)
+	prolificEpsScoreUpdates := ScorePacker(prolificScoreVals, time.Duration(17*time.Millisecond))
 	go func() {
 		for {
-			scoreVals <- string((<-epsfeeder).data)
+			prolificScoreVals <- string((<-prolificEpsFeeder).data)
 		}
 	}()
-
+	
+	mentionedScoreVals := make(chan string)
+	mentionedEpsScoreUpdates := ScorePacker(mentionedScoreVals, time.Duration(17*time.Millisecond))
+	go func() {
+		for {
+			mentionedScoreVals <- string((<-mentionedEpsFeeder).data)
+		}
+	}()
+	
+	hashtagScoreVals := make(chan string)
+	hashtagEpsScoreUpdates := ScorePacker(hashtagScoreVals, time.Duration(17*time.Millisecond))
+	go func() {
+		for {
+			hashtagScoreVals <- string((<-hashtagEpsFeeder).data)
+		}
+	}()
+	
+	tweetCountScoreVals := make(chan string)
+	tweetCountEpsScoreUpdates := ScorePacker(tweetCountScoreVals, time.Duration(17*time.Millisecond))
+	go func() {
+		for {
+			tweetCountScoreVals <- string((<-tweetCountEpsFeeder).data)
+		}
+	}()
+	
 	// goroutines to handle passing messages to the proper connection pool.
 	//
 	// I could use a select here and do as one goroutine, but having each be
@@ -50,37 +95,53 @@ func main() {
 	// have a small amount of overhead in creating the SSEMessage so this is
 	// theoretically better if we are running in parallel on appropriate hardware.
 
-	// rawPublisher
-	go func() {
-		for msg := range rawScoreUpdates {
-			clients <- sseserver.SSEMessage{
-				Event:     "",
-				Data:      msg.data,
-				Namespace: "/raw",
-			}
-		}
-	}()
-
 	// epsPublisher
 	go func() {
-		for val := range epsScoreUpdates {
+		for val := range prolificEpsScoreUpdates {
 			clients <- sseserver.SSEMessage{
 				Event:     "",
 				Data:      val,
-				Namespace: "/eps",
+				Namespace: "/eps/prolific",
 			}
 		}
 	}()
-
-	// detailPublisher
+	
 	go func() {
-		for msg := range detailUpdates {
-			dchan := "/details/" + strings.Split(msg.channel, ".")[2]
-
+		for val := range mentionedEpsScoreUpdates {
 			clients <- sseserver.SSEMessage{
-				Event:     msg.channel,
+				Event:     "",
+				Data:      val,
+				Namespace: "/eps/mentioned",
+			}
+		}
+	}()
+	
+	go func() {
+		for val := range hashtagEpsScoreUpdates {
+			clients <- sseserver.SSEMessage{
+				Event:     "",
+				Data:      val,
+				Namespace: "/eps/hashtag",
+			}
+		}
+	}()
+	
+	go func() {
+		for val := range tweetCountEpsScoreUpdates {
+			clients <- sseserver.SSEMessage{
+				Event:     "",
+				Data:      val,
+				Namespace: "/eps/tweet-count",
+			}
+		}
+	}()
+	
+	go func() {
+		for msg := range recentTweetsUpdates {
+			clients <- sseserver.SSEMessage{
+				Event:     "",
 				Data:      msg.data,
-				Namespace: dchan,
+				Namespace: "/recent-tweets",
 			}
 		}
 	}()

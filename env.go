@@ -40,7 +40,7 @@ func envPort() string {
 	if env != "" {
 		return (":" + env) //golang and its weird port mechanics
 	}
-	return ":8001"
+	return ":8080"
 }
 
 // what is our dev/staging/prod environment
